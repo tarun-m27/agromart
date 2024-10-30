@@ -1,9 +1,12 @@
+import google.generativeai as genai  # Import the Gemini API
 from flask import Flask, request, render_template, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 import os
 import numpy as np
 import pickle
+import base64
 from PIL import Image
+from io import BytesIO
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -15,7 +18,7 @@ model_path = 'plant_disease_prediction_model_mobilenet.pkl'
 with open(model_path, 'rb') as model_file:
     model = pickle.load(model_file)
 
-# Class indices mapping (Adjust as per your model)
+# Class indices mapping
 class_indices = {
     0: 'Apple Scab',
     1: 'Apple Black Rot',
@@ -57,11 +60,20 @@ class_indices = {
     37: 'Tomato Healthy'
 }
 
+# Gemini configuration (replace with your API key)
+genai.configure(api_key="AIzaSyCqOQQK5GEshB80OknRJfmUCsG7aM_1F-g")  # Replace with your actual API key
+
 def load_and_preprocess_image(image_path):
     img = Image.open(image_path).resize((224, 224))
     img_array = np.array(img).astype('float32') / 255.0
     img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
     return img_array
+
+def encode_image_base64(image_path):
+    with Image.open(image_path) as img:
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode()
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -92,9 +104,23 @@ def index():
                 flash('The uploaded image does not appear to contain a leaf or plant.')
                 return redirect(request.url)
 
-            return render_template('index.html', prediction=predicted_class_name)
+            # Use Gemini to recommend fertilizers
+            prompt = f"Predict the appropriate fertilizers or treatments for the plant disease '{predicted_class_name}'. if the term '{predicted_class_name}' do not contain 'healthy' Provide the recommendations directly without any introductory sentences else just say it is healthy."
+            cleaned_output = prompt.replace("**", "")
+            gemini_response = genai.GenerativeModel("gemini-1.5-flash").generate_content(cleaned_output)
+            fertilizer_recommendation = gemini_response.text.replace("*", "")
 
-    return render_template('index.html', prediction=None)
+            # Convert image to base64 for displaying in HTML
+            encoded_image = encode_image_base64(file_path)
+
+            return render_template(
+                'index.html', 
+                prediction=predicted_class_name, 
+                image_data=encoded_image,
+                fertilizer_recommendation=fertilizer_recommendation
+            )
+
+    return render_template('index.html', prediction=None, image_data=None)
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
